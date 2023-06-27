@@ -3,5 +3,21 @@
         "editor.defaultFormatter": "ms-python.black-formatter"
     },
     "python.formatting.provider": "none",
+      # Especifica que el linter de código sea pycodestyle
+    "python.linting.pycodestyleEnabled": true,
+      # Especifica que el linter de la documentación sea pydocstyle
+    "python.linting.pydocstyleEnabled": true,
+      # Activa el lintado
+    "python.linting.enabled": true,
+      # Especifica que el formatter sea autopep8
+    "python.formatting.provider": "autopep8",
+      # Especifica que se pase el autopep8 al guardar
+    "editor.formatOnSave": true,
+      # Define los argumentos con los que se ejecuta el formateo
+      # En este caso define la agresividad del mismo
+    "python.formatting.autopep8Args": [
+      "--aggressive",
+      "--aggressive"
+    ]
     "github.copilot.advanced": {}
 }
