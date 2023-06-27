@@ -66,16 +66,32 @@ class HistoriasClinicas(scrapy.Spider):
 
     def start_requests(self):
         cookies = CookieHandler.load_cookies()
-        if cookies is not None and self.are_cookies_valid
+        if cookies is not None and self.are_cookies_valid(cookies):
+            yield scrapy.Request(url=self.start_urls[0], cookies=cookies, callback=self.parse_hhcc)
+        else:
+            login_spider = LoginSpider()
+            yield from login_spider.start_requests()
 
+    def cookies_saved(self, spider, cookies):
+        # Se ejecuta cuando se emite la señal de cookies guardadas
+        # Verificar si las cookies son válidas
+        if self.are_cookies_valid(cookies):
+            # Realizar la solicitud inicial ahora que se tienen las cookies válidas
+            yield scrapy.Request(url=self.start_urls[0], cookies=cookies, callback=self.parse_hhcc)
 
+    def are_cookies_valid(self, cookies):
+        # Verificar si las cookies son válidas
+        # Aquí puedes agregar tu lógica de validación de cookies
+        # Por ejemplo, puedes realizar una solicitud de prueba al servidor para verificar su autenticidad
+        return False
 
-"""
-Gracias por proporcionar el código modificado. He revisado el código y aquí están mis comentarios:
+    def parse_hhcc(self, response):
+        # Encuentra las filas de la tabla
+        rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
 
-En CookieHandler.load_cookies(), se agregó la creación de una instancia del spider LoginSpider y se obtuvieron las solicitudes de inicio de sesión mediante login_requests. Sin embargo, en este punto, no es posible esperar a que se completen las solicitudes del spider LoginSpider dentro de la función load_cookies(). La función load_cookies() se ejecuta de forma asíncrona y no se puede detener para esperar el resultado de otra función. Por lo tanto, no funcionará como se espera.
+        for row in rows:
+            # Extrae el valor del campo #1 (primer td)
+            value = row.xpath('.//td[1]/text()').get()
 
-En CookieHandler.load_cookies(), sería más apropiado lanzar una señal (evento) cuando las cookies no sean válidas o no exista el archivo cookies.pkl. Luego, en el spider HistoriasClinicas, se puede definir un método para manejar la señal y realizar la solicitud de inicio de sesión en ese momento.
-
-Aquí tienes una versión modificada del código teniendo en cuenta los puntos mencionados:
-"""
+            # Imprime el valor en la consola
+            print(value)
