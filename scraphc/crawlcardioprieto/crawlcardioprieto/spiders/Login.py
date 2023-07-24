@@ -3,7 +3,7 @@ from .CookieHandler import CookieHandler
 
 class LoginSpider(scrapy.Spider):
     name = 'login'
-    login_url = "https://estudioadb.com/hc/index.php/login/validarUsuario"
+    login_url = e
 
     def start_requests(self):
         cookies = CookieHandler.load_cookies()
