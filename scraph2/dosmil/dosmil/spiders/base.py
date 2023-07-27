@@ -1,71 +1,97 @@
 import os
 import pickle
 import scrapy
+from scrapy import Spider
+from abc import ABC, abstractmethod  # Importa abstractmethod desde el módulo abc
 from scrapy.http import Request
 from scrapy.exceptions import IgnoreRequest
 
 
+# Gestor de cookies para guardarlas y cargarlas desde un archivo
 class CookieHandler:
     filename = "cookies.pkl"
 
+    def __init__(self, logger):
+        self.logger = logger
+
     def save_cookies(self, cookies):
-        print("GUARDANDO COOKIES")
+        """Guarda las cookies en un archivo."""
         with open(self.filename, "wb") as f:
             pickle.dump(cookies, f)
+        self.logger.info('Cookies guardadas en el archivo.')
 
     def load_cookies(self):
-        print("CARGANDO COOKIES")
+        """Carga las cookies desde un archivo, si existe."""
         if os.path.exists(self.filename):
             with open(self.filename, "rb") as f:
-                return pickle.load(f)
+                cookies = pickle.load(f)
+                self.logger.info('Cookies cargadas desde el archivo.')
+                return cookies
         else:
-            print("LA CONCHADE TU MADRE NO EXISTE EL ARCHIVO")
+            self.logger.warning('Archivo de cookies no encontrado.')
             return None
 
-class AuthenticatedSpider(scrapy.Spider):
+class AuthenticatedSpider(scrapy.Spider, ABC):
+    # Credenciales y URL de login
     username = 'omar'
     password = 'Corbis5'
     login_url = 'https://estudioadb.com/hc/index.php/login/validarUsuario'
-    cookie_handler = CookieHandler()
+    
+    # Gestor de cookies
+    cookie_handler = CookieHandler(logger=scrapy.utils.log.logger)
 
     def start_requests(self):
+        """Inicia las solicitudes. Si existen cookies, las usa. Si no, se loguea."""
         cookies = self.cookie_handler.load_cookies()
         if cookies is not None:
-            yield Request(self.start_url, cookies=cookies, callback=self.parse, errback=self.handle_login_error)
+            yield Request(self.start_url, cookies=cookies, callback=self.check_cookie, errback=self.handle_login_error)
         else:
             yield from self.login()
 
+    def check_cookie(self, response):
+        """Verifica si la respuesta indica un inicio de sesión exitoso o si las cookies se cargaron desde el archivo."""
+        cookies = self.cookie_handler.load_cookies()
+        if cookies is not None:
+            # Las cookies se cargaron desde el archivo, continuar con el análisis de la página
+            yield from self.parse(response)
+        else:
+            # Verificar si el inicio de sesión fue exitoso
+            if response.css('li.dropdown a[href*="/login/logout"]'):
+                yield from self.parse(response)
+            else:
+                self.logger.warning('Cookies inválidas o expiradas. Intentando relogueo.')
+                yield from self.login()
+                
     def login(self):
+        """Hace una petición para loguearse."""
         yield scrapy.FormRequest(url=self.login_url, formdata={'usuario': self.username, 'pass': self.password}, callback=self.after_login)
 
     def after_login(self, response):
+        """Guarda las cookies después del login y continua con el inicio."""
         if response.css('li.dropdown a[href*="/login/logout"]'):
-            cookies = {c.name: c.value for c in response.request.cookies}
-            # cookies = response.headers.getlist('Set-Cookie')
-            self.cookie_handler.save_cookies(cookies)
-            yield Request(self.start_url, cookies=cookies, callback=self.parse)
+            cookies = response.headers.getlist('Set-Cookie')
+            cookie_dict = {cookie.decode('utf-8').split('=', 1)[0]: cookie.decode('utf-8').split('=', 1)[1] for cookie in cookies}
+            self.cookie_handler.save_cookies(cookie_dict)
+            yield Request(self.start_url, cookies=cookie_dict, callback=self.parse)
         else:
-            self.logger.error('ERROR AL LOGUEARSE')
+            self.logger.error('Error al loguearse.')
 
     def handle_login_error(self, failure):
+        """Si hay un error, intenta loguearse nuevamente."""
         if failure.check(IgnoreRequest):
-            self.logger.error('Scrapy Fallado. Relogueando.')
+            self.logger.error('Fallo en Scrapy. Intentando relogueo.')
             yield from self.login()
-
-    # Aquí es donde tu spider concreta procesaría las respuestas HTTP.
-    def parse(self, response):
-        pass
 
 class HistoriasClinicasSpider(AuthenticatedSpider):
     name = "historias_clinicas"
     start_url = "https://estudioadb.com/hc/index.php/hClinica/index"
 
     def parse(self, response):
+        """Extrae e imprime el valor del primer campo de cada fila en la tabla de historias clínicas."""
         rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
-
         for row in rows:
-            # Extrae el valor del campo #1 (primer td)
             value = row.xpath('.//td[1]/text()').get()
+            self.logger.info(f"Valor extraído: {value}")
 
-            # Imprime el valor en la consola
-            print(value)
+        # Aquí debes devolver un objeto iterable, por ejemplo, una lista vacía.
+        return []

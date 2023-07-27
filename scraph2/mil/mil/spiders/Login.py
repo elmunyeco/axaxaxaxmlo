@@ -1,8 +1,5 @@
-import scrapy
 import pickle
 import os
-
-# from .CookieHandler import CookieHandler
 
 class LoginSpider(scrapy.Spider):
     login_url =  'https://estudioadb.com/hc/index.php/login/validarUsuario'
@@ -20,7 +17,7 @@ class LoginSpider(scrapy.Spider):
         return scrapy.FormRequest(url=self.login_url, formdata=data, callback=self.after_login)    
     
     def start_requests(self):
-        cookies = get_cookies()
+        cookies = get_cookies():
         if cookies is not None:
             yield scrapy.Request(url=self.login_url, cookies=cookies, callback=self.after_login)
         else:
