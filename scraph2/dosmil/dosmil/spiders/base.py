@@ -1,10 +1,15 @@
 import os
 import pickle
 import scrapy
+import csv
 from scrapy import Spider
 from abc import ABC, abstractmethod  # Importa abstractmethod desde el módulo abc
 from scrapy.http import Request
 from scrapy.exceptions import IgnoreRequest
+
+import sys
+from scrapy.utils.project import get_project_settings
+
 
 
 # Gestor de cookies para guardarlas y cargarlas desde un archivo
@@ -85,13 +90,77 @@ class AuthenticatedSpider(scrapy.Spider, ABC):
 class HistoriasClinicasSpider(AuthenticatedSpider):
     name = "historias_clinicas"
     start_url = "https://estudioadb.com/hc/index.php/hClinica/index"
+    csv_file = "historias_clinicas.csv"
 
+
+    # Archivo CSV donde se escribirán los datos    
     def parse(self, response):
-        """Extrae e imprime el valor del primer campo de cada fila en la tabla de historias clínicas."""
+        """Extrae los valores de los campos especificados de cada fila en la tabla de historias clínicas y los escribe en un archivo CSV."""
         rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
-        for row in rows:
-            value = row.xpath('.//td[1]/text()').get()
-            self.logger.info(f"Valor extraído: {value}")
+        
+        # Abre el archivo CSV en modo append
+        with open(self.csv_file, mode='a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            
+            for row in rows:
+                field1 = row.xpath('.//td[1]/text()').get()
+                field2 = row.xpath('.//td[@class="center"]/a/@href').get()
+                
+                # Escribe los campos en el archivo CSV
+                writer.writerow([field1, field2])
 
-        # Aquí debes devolver un objeto iterable, por ejemplo, una lista vacía.
+                # Imprime los campos en la consola
+                self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
+
+        # Devuelve una lista vacía
+        return []
+    
+class PagedHistoriasClinicasSpider(AuthenticatedSpider):
+    name = "paged_historias_clinicas"
+    start_url = "https://estudioadb.com/hc/index.php/hClinica/index"
+    pages_url = "https://estudioadb.com/hc/index.php/hClinica/listar/"
+    
+    csv_file = "historias_clinicas.csv"
+
+    def start_requests(self):
+        
+        yield from super().start_requests()  # Siempre inicia el proceso de autenticación
+
+        page_number = getattr(self, 'page', None)
+        
+        if page_number is None or page_number == 'all':
+            self.logger.info ("LA CONCHA DE TU MAAAAAAAAAAAAAAAAAAAAAAAAAAAADREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+            yield from self.iterate_through_pages()
+        else:
+            self.logger.info ("LA PUTAQUE TE HIZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO")
+            yield Request(f"{self.pages_url}{page_number}", callback=self.parse)
+            """yield from super().start_requests()"""
+            
+    def iterate_through_pages(self):
+        start_page = 1
+        end_page = 2  # You can adjust the end page as needed
+        for page in range(start_page, end_page + 1):
+            yield Request(f"{self.pages_url}{page}", callback=self.parse)
+
+
+    # Archivo CSV donde se escribirán los datos    
+    def parse(self, response):
+        """Extrae los valores de los campos especificados de cada fila en la tabla de historias clínicas y los escribe en un archivo CSV."""
+        rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
+      
+        # Abre el archivo CSV en modo append
+        with open(self.csv_file, mode='a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            
+            for row in rows:
+                field1 = row.xpath('.//td[1]/text()').get()
+                field2 = row.xpath('.//td[@class="center"]/a/@href').get()
+                
+                # Escribe los campos en el archivo CSV
+                writer.writerow([field1, field2])
+
+                # Imprime los campos en la consola
+                self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
+
+        # Devuelve una lista vacía
         return []
