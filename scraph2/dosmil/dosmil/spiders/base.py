@@ -1,18 +1,12 @@
 import os
 import pickle
 import scrapy
-import csv
-from scrapy import Spider
-from abc import ABC, abstractmethod  # Importa abstractmethod desde el módulo abc
 from scrapy.http import Request
 from scrapy.exceptions import IgnoreRequest
-
-import sys
 from scrapy.utils.project import get_project_settings
+from sortedcontainers import SortedDict
+import csv
 
-
-
-# Gestor de cookies para guardarlas y cargarlas desde un archivo
 class CookieHandler:
     filename = "cookies.pkl"
 
@@ -21,8 +15,13 @@ class CookieHandler:
 
     def save_cookies(self, cookies):
         """Guarda las cookies en un archivo."""
+        cookie_dict = {}
+        for cookie in cookies:
+            cookie_name, value = cookie.decode('utf-8').split(';', 1)[0].split('=', 1)
+            cookie_dict[cookie_name] = value
+        
         with open(self.filename, "wb") as f:
-            pickle.dump(cookies, f)
+            pickle.dump(cookie_dict, f)
         self.logger.info('Cookies guardadas en el archivo.')
 
     def load_cookies(self):
@@ -36,48 +35,44 @@ class CookieHandler:
             self.logger.warning('Archivo de cookies no encontrado.')
             return None
 
-class AuthenticatedSpider(scrapy.Spider, ABC):
+class AuthenticatedSpider(scrapy.Spider):
+
     # Credenciales y URL de login
     username = 'omar'
     password = 'Corbis5'
     login_url = 'https://estudioadb.com/hc/index.php/login/validarUsuario'
+    start_urls = []
     
     # Gestor de cookies
     cookie_handler = CookieHandler(logger=scrapy.utils.log.logger)
 
+    def is_logged_in(self, response):
+        """Verifica si la respuesta indica un inicio de sesión exitoso."""
+        return bool(response.css('li.dropdown a[href*="/login/logout"]'))
+
     def start_requests(self):
-        """Inicia las solicitudes. Si existen cookies, las usa. Si no, se loguea."""
         cookies = self.cookie_handler.load_cookies()
-        if cookies is not None:
-            yield Request(self.start_url, cookies=cookies, callback=self.check_cookie, errback=self.handle_login_error)
+        if cookies:
+            yield Request(self.start_urls[0], cookies=cookies, callback=self.check_cookie, errback=self.handle_login_error)
         else:
             yield from self.login()
 
     def check_cookie(self, response):
-        """Verifica si la respuesta indica un inicio de sesión exitoso o si las cookies se cargaron desde el archivo."""
-        cookies = self.cookie_handler.load_cookies()
-        if cookies is not None:
-            # Las cookies se cargaron desde el archivo, continuar con el análisis de la página
-            yield from self.parse(response)
+        if not self.is_logged_in(response):
+            self.logger.warning('Cookies inválidas o expiradas. Intentando relogueo.')
+            yield from self.login()
         else:
-            # Verificar si el inicio de sesión fue exitoso
-            if response.css('li.dropdown a[href*="/login/logout"]'):
-                yield from self.parse(response)
-            else:
-                self.logger.warning('Cookies inválidas o expiradas. Intentando relogueo.')
-                yield from self.login()
-                
+            yield from self.parse(response)
+
     def login(self):
         """Hace una petición para loguearse."""
         yield scrapy.FormRequest(url=self.login_url, formdata={'usuario': self.username, 'pass': self.password}, callback=self.after_login)
 
     def after_login(self, response):
-        """Guarda las cookies después del login y continua con el inicio."""
-        if response.css('li.dropdown a[href*="/login/logout"]'):
+        if self.is_logged_in(response):
             cookies = response.headers.getlist('Set-Cookie')
-            cookie_dict = {cookie.decode('utf-8').split('=', 1)[0]: cookie.decode('utf-8').split('=', 1)[1] for cookie in cookies}
-            self.cookie_handler.save_cookies(cookie_dict)
-            yield Request(self.start_url, cookies=cookie_dict, callback=self.parse)
+            self.cookie_handler.save_cookies(cookies)
+            yield Request(self.start_urls[0], callback=self.parse)
         else:
             self.logger.error('Error al loguearse.')
 
@@ -87,80 +82,142 @@ class AuthenticatedSpider(scrapy.Spider, ABC):
             self.logger.error('Fallo en Scrapy. Intentando relogueo.')
             yield from self.login()
 
-class HistoriasClinicasSpider(AuthenticatedSpider):
-    name = "historias_clinicas"
-    start_url = "https://estudioadb.com/hc/index.php/hClinica/index"
-    csv_file = "historias_clinicas.csv"
-
-
-    # Archivo CSV donde se escribirán los datos    
-    def parse(self, response):
-        """Extrae los valores de los campos especificados de cada fila en la tabla de historias clínicas y los escribe en un archivo CSV."""
-        rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
-        
-        # Abre el archivo CSV en modo append
-        with open(self.csv_file, mode='a', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            
-            for row in rows:
-                field1 = row.xpath('.//td[1]/text()').get()
-                field2 = row.xpath('.//td[@class="center"]/a/@href').get()
-                
-                # Escribe los campos en el archivo CSV
-                writer.writerow([field1, field2])
-
-                # Imprime los campos en la consola
-                self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
-
-        # Devuelve una lista vacía
-        return []
-    
 class PagedHistoriasClinicasSpider(AuthenticatedSpider):
     name = "paged_historias_clinicas"
-    start_url = "https://estudioadb.com/hc/index.php/hClinica/index"
+    start_urls = ["https://estudioadb.com/hc/index.php/hClinica/index"]
     pages_url = "https://estudioadb.com/hc/index.php/hClinica/listar/"
     
     csv_file = "historias_clinicas.csv"
 
-    def start_requests(self):
+    # Continúa con la lógica específica para PagedHistoriasClinicasSpider...
+
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.records_to_write = self.load_existing_records()
         
-        yield from super().start_requests()  # Siempre inicia el proceso de autenticación
+    def start_requests(self):
+        cookies = self.cookie_handler.load_cookies()
+        
+        if cookies:
+            # Si hay cookies, haz una solicitud a la URL de inicio para verificar si son válidas
+            yield Request(self.start_urls[0], cookies=cookies, callback=self.check_cookie, errback=self.handle_login_error)
+        else:
+            # Si no hay cookies, inicia sesión
+            yield from self.login()
 
         page_number = getattr(self, 'page', None)
-        
         if page_number is None or page_number == 'all':
-            self.logger.info ("LA CONCHA DE TU MAAAAAAAAAAAAAAAAAAAAAAAAAAAADREEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-            yield from self.iterate_through_pages()
+            self.logger.info ("HAY QUE ITERAR POR TODAS LAS PAGINAS")
+            yield from self.iterate_through_pages(cookies) # Pasa las cookies como argumento
         else:
-            self.logger.info ("LA PUTAQUE TE HIZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO")
-            yield Request(f"{self.pages_url}{page_number}", callback=self.parse)
-            """yield from super().start_requests()"""
+            self.logger.info ("HAY QUE ITERAR POR UNA PAGINA ESPECIFICA")
+            yield Request(f"{self.pages_url}{page_number}", cookies=cookies, callback=self.parse, meta={'cookies': cookies})
             
-    def iterate_through_pages(self):
+    def iterate_through_pages(self, cookies):
         start_page = 1
-        end_page = 2  # You can adjust the end page as needed
+        end_page = 2 
+        
+        if cookies is None or not self.check_cookie(response):
+            self.logger.error('No se encontraron cookies o están expiradas.')
+            yield from self.login()    
+    
         for page in range(start_page, end_page + 1):
-            yield Request(f"{self.pages_url}{page}", callback=self.parse)
-
-
+            yield Request(f"{self.pages_url}{page}", cookies=cookies, callback=self.parse, meta={'cookies': cookies})
+    
     # Archivo CSV donde se escribirán los datos    
+    
     def parse(self, response):
-        """Extrae los valores de los campos especificados de cada fila en la tabla de historias clínicas y los escribe en un archivo CSV."""
+        cookies = response.meta.get('cookies')  # Obtiene las cookies del meta
+        if cookies is None or not self.check_cookie(response):
+            self.logger.error('No se encontraron cookies o están expiradas.')
+            yield from self.login()    
+        
+        raw_html = response.body.decode(response.encoding)
+        self.logger.info(f"Raw Raw RawRawRawRawRawRawRawRaw Raw Raw Raw RawHTML: {raw_html}")
+        
         rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
-      
-        # Abre el archivo CSV en modo append
+        for row in rows:
+            field1 = row.xpath('.//td[1]/text()').get()
+            field2 = row.xpath('.//td[2]/text()').get()
+            self.records_to_write[field1] = field2  # Agregar al SortedDict
+
+            self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
+            
+        self.print_formatted_rows(rows)  # Impresión formateada de rows
+        
+        # Write to the CSV file
+        with open(self.csv_file, mode='w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            for field1, field2 in self.records_to_write.items():
+                writer.writerow([field1, field2])
+  # Impresión formateada de rows
+    
         with open(self.csv_file, mode='a', newline='', encoding='utf-8') as file:
             writer = csv.writer(file)
-            
-            for row in rows:
-                field1 = row.xpath('.//td[1]/text()').get()
-                field2 = row.xpath('.//td[@class="center"]/a/@href').get()
-                
-                # Escribe los campos en el archivo CSV
+            for field1, field2 in records_to_write.items():
                 writer.writerow([field1, field2])
 
-                # Imprime los campos en la consola
-                self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
-
+    def print_formatted_rows(self, rows):
+        for index, row in enumerate(rows, start=1):
+            field1 = row.xpath('.//td[1]/text()').get()
+            field2 = row.xpath('.//td[@class="center"]/a/@href').get()
+            self.logger.info(f"Formatted Row {index}: Campo 1: {field1}, Campo 2: {field2}")
+ 
         # Devuelve una lista vacía
         return []
+    
+    def load_existing_records(self):
+        full_path = os.path.abspath(self.csv_file)
+        self.logger.info(f"Cargando registros existentes desde: {full_path}")
+        
+        if not os.path.exists(self.csv_file):
+            return SortedDict()
+        
+        existing_records = SortedDict()
+        with open(self.csv_file, mode='r', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                existing_records[row[0]] = row[1]
+        return existing_records
+
+
+    
+    def parse(self, response):
+        cookies = response.meta.get('cookies')  # Obtiene las cookies del meta
+        if cookies is None or not self.check_cookie(response):
+            self.logger.error('No se encontraron cookies o están expiradas.')
+            yield from self.login()    
+        
+        raw_html = response.body.decode(response.encoding)
+        self.logger.info(f"Raw Raw RawRawRawRawRawRawRawRaw Raw Raw Raw RawHTML: {raw_html}")
+        
+        rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
+        for row in rows:
+            field1 = row.xpath('.//td[1]/text()').get()
+            field2 = row.xpath('.//td[2]/text()').get()
+            self.records_to_write[field1] = field2  # Agregar al SortedDict
+
+            self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
+            
+        self.print_formatted_rows(rows)  # Impresión formateada de rows
+        
+        # Write to the CSV file
+        with open(self.csv_file, mode='w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            for field1, field2 in self.records_to_write.items():
+                writer.writerow([field1, field2])
+  # Impresión formateada de rows
+
+    
+    def close_spider(self, spider):
+        full_path = os.path.abspath(self.csv_file)
+        self.logger.info(f"Escribiendo registros en: {full_path}")
+        
+        with open(self.csv_file, mode='w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            for field1, field2 in self.records_to_write.items():
+                writer.writerow([field1, field2])
+
+
+    

@@ -32,6 +32,7 @@ DOWNLOAD_DELAY = 2  # Retardo de 2 segundos entre solicitudes
 
 # Disable cookies (enabled by default)
 #COOKIES_ENABLED = False
+COOKIES_ENABLED = True
 
 # Disable Telnet Console (enabled by default)
 #TELNETCONSOLE_ENABLED = False
@@ -50,9 +51,10 @@ DOWNLOAD_DELAY = 2  # Retardo de 2 segundos entre solicitudes
 
 # Enable or disable downloader middlewares
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
-#DOWNLOADER_MIDDLEWARES = {
-#    "dosmil.middlewares.DosmilDownloaderMiddleware": 543,
-#}
+DOWNLOADER_MIDDLEWARES = {
+    'dosmil.middlewares.DosmilDownloaderMiddleware': 543,
+    'scrapy.downloadermiddlewares.cookies.CookiesMiddleware': 700,
+}
 
 # Enable or disable extensions
 # See https://docs.scrapy.org/en/latest/topics/extensions.html
