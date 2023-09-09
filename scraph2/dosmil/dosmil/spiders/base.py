@@ -82,95 +82,90 @@ class AuthenticatedSpider(scrapy.Spider):
             self.logger.error('Fallo en Scrapy. Intentando relogueo.')
             yield from self.login()
 
+
+
+import scrapy
+from scrapy import Request
+import csv
+import os
+from collections import OrderedDict as SortedDict
+
 class PagedHistoriasClinicasSpider(AuthenticatedSpider):
     name = "paged_historias_clinicas"
     start_urls = ["https://estudioadb.com/hc/index.php/hClinica/index"]
     pages_url = "https://estudioadb.com/hc/index.php/hClinica/listar/"
-    
     csv_file = "historias_clinicas.csv"
 
-    # Continúa con la lógica específica para PagedHistoriasClinicasSpider...
-
-    
-    def __init__(self, *args, **kwargs):
+    def __init__(self, start_page=None, end_page=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.records_to_write = self.load_existing_records()
+        self.start_page = int(start_page) if start_page else 1
+        self.end_page = int(end_page) if end_page else None
+          
         
     def start_requests(self):
         cookies = self.cookie_handler.load_cookies()
         
-        if cookies:
-            # Si hay cookies, haz una solicitud a la URL de inicio para verificar si son válidas
-            yield Request(self.start_urls[0], cookies=cookies, callback=self.check_cookie, errback=self.handle_login_error)
-        else:
-            # Si no hay cookies, inicia sesión
+        if not cookies:
             yield from self.login()
+            return
 
-        page_number = getattr(self, 'page', None)
-        if page_number is None or page_number == 'all':
-            self.logger.info ("HAY QUE ITERAR POR TODAS LAS PAGINAS")
-            yield from self.iterate_through_pages(cookies) # Pasa las cookies como argumento
-        else:
-            self.logger.info ("HAY QUE ITERAR POR UNA PAGINA ESPECIFICA")
-            yield Request(f"{self.pages_url}{page_number}", cookies=cookies, callback=self.parse, meta={'cookies': cookies})
+        # Verifica si start_page es mayor que end_page
+        if self.end_page and self.start_page > self.end_page:
+            self.logger.error(f"start_page ({self.start_page}) es mayor que end_page ({self.end_page}). Abortando.")
+            return
+        
+        if self.start_page and self.end_page:
+            self.logger.info(f"Parseando páginas desde {self.start_page} hasta {self.end_page}...")
+            for page in range(self.start_page, self.end_page + 1):
+                yield Request(f"{self.pages_url}{page}", callback=self.parse_page)
+        else: # Si no se proporciona una página final, se obtiene de la página de inicio
+            self.logger.info("Parseando páginas desde la página de inicio...")
+            yield Request(self.pages_url + "1", cookies=cookies, callback=self.parse_pagination, errback=self.handle_login_error)        
+
+    def parse_pagination(self, response):
+        self.logger.info("Entrando a parse_pagination...")
+        # Escribe el contenido de la página a un archivo
+        with open("raw.html", "w", encoding="utf-8") as file:
+            file.write(response.text)    
+    
+        urls = response.css('ul.pagination li a::attr(href)').extract()
+        if not urls:
+            self.logger.error("No se encontró el paginador. Abortando.")
+            return
+        
+        # Si no se especifica start_page, comenzar desde la primera página
+        if not self.start_page:
+            self.start_page = 1
             
-    def iterate_through_pages(self, cookies):
-        start_page = 1
-        end_page = 2 
-        
-        if cookies is None or not self.check_cookie(response):
-            self.logger.error('No se encontraron cookies o están expiradas.')
-            yield from self.login()    
-    
-        for page in range(start_page, end_page + 1):
-            yield Request(f"{self.pages_url}{page}", cookies=cookies, callback=self.parse, meta={'cookies': cookies})
-    
-    # Archivo CSV donde se escribirán los datos    
-    
-    def parse(self, response):
-        cookies = response.meta.get('cookies')  # Obtiene las cookies del meta
-        if cookies is None or not self.check_cookie(response):
-            self.logger.error('No se encontraron cookies o están expiradas.')
-            yield from self.login()    
-        
-        raw_html = response.body.decode(response.encoding)
-        self.logger.info(f"Raw Raw RawRawRawRawRawRawRawRaw Raw Raw Raw RawHTML: {raw_html}")
-        
-        rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
-        for row in rows:
-            field1 = row.xpath('.//td[1]/text()').get()
-            field2 = row.xpath('.//td[2]/text()').get()
-            self.records_to_write[field1] = field2  # Agregar al SortedDict
-
-            self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
+        # Si no se especifica end_page, determinarlo a partir del paginador
+        if not self.end_page:
+            if len(urls) >= 2 and 'listar' in urls[-2]:
+                self.end_page = int(urls[-2].split('/')[-1])
+            else:
+                # Cuando estamos en el último rango de páginas y los botones de "siguiente" no están presentes
+                self.end_page = int(urls[-1].split('/')[-1])    
             
-        self.print_formatted_rows(rows)  # Impresión formateada de rows
-        
-        # Write to the CSV file
-        with open(self.csv_file, mode='w', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            for field1, field2 in self.records_to_write.items():
-                writer.writerow([field1, field2])
-  # Impresión formateada de rows
-    
-        with open(self.csv_file, mode='a', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            for field1, field2 in records_to_write.items():
-                writer.writerow([field1, field2])
+        for page in range(self.start_page, self.end_page + 1):
+            yield Request(f"{self.pages_url}{page}", callback=self.parse_page)
 
-    def print_formatted_rows(self, rows):
-        for index, row in enumerate(rows, start=1):
-            field1 = row.xpath('.//td[1]/text()').get()
-            field2 = row.xpath('.//td[@class="center"]/a/@href').get()
-            self.logger.info(f"Formatted Row {index}: Campo 1: {field1}, Campo 2: {field2}")
+
+    def parse_page(self, response):
+        self.logger.info(f"Parseando página: {response.url}")
+        
+        #rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
+        #for row in rows:
+        #    id_hc = row.xpath('.//td[1]/text()').get()
+        #    nombre = row.xpath('.//td[2]/text()').get()
+        #    apellido = row.xpath('.//td[3]/text()').get()
+        #    self.records_to_write[id_hc] = {"nombre": nombre, "apellido": apellido}
+        #    self.logger.info(f"ID: {id_hc}, Nombre: {nombre}, Apellido: {apellido}")
  
-        # Devuelve una lista vacía
-        return []
-    
+
+    def parse(self, response):
+        pass
+
     def load_existing_records(self):
-        full_path = os.path.abspath(self.csv_file)
-        self.logger.info(f"Cargando registros existentes desde: {full_path}")
-        
         if not os.path.exists(self.csv_file):
             return SortedDict()
         
@@ -178,46 +173,12 @@ class PagedHistoriasClinicasSpider(AuthenticatedSpider):
         with open(self.csv_file, mode='r', encoding='utf-8') as file:
             reader = csv.reader(file)
             for row in reader:
-                existing_records[row[0]] = row[1]
+                existing_records[row[0]] = {"nombre": row[1], "apellido": row[2]}
         return existing_records
 
-
-    
-    def parse(self, response):
-        cookies = response.meta.get('cookies')  # Obtiene las cookies del meta
-        if cookies is None or not self.check_cookie(response):
-            self.logger.error('No se encontraron cookies o están expiradas.')
-            yield from self.login()    
-        
-        raw_html = response.body.decode(response.encoding)
-        self.logger.info(f"Raw Raw RawRawRawRawRawRawRawRaw Raw Raw Raw RawHTML: {raw_html}")
-        
-        rows = response.xpath('//table[@id="dataTables-example"]/tbody/tr')
-        for row in rows:
-            field1 = row.xpath('.//td[1]/text()').get()
-            field2 = row.xpath('.//td[2]/text()').get()
-            self.records_to_write[field1] = field2  # Agregar al SortedDict
-
-            self.logger.info(f"Campo 1: {field1}, Campo 2: {field2}")
-            
-        self.print_formatted_rows(rows)  # Impresión formateada de rows
-        
-        # Write to the CSV file
-        with open(self.csv_file, mode='w', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            for field1, field2 in self.records_to_write.items():
-                writer.writerow([field1, field2])
-  # Impresión formateada de rows
-
-    
     def close_spider(self, spider):
-        full_path = os.path.abspath(self.csv_file)
-        self.logger.info(f"Escribiendo registros en: {full_path}")
-        
         with open(self.csv_file, mode='w', newline='', encoding='utf-8') as file:
             writer = csv.writer(file)
-            for field1, field2 in self.records_to_write.items():
-                writer.writerow([field1, field2])
-
-
-    
+            writer.writerow(["ID", "Nombre", "Apellido"])  # Encabezados
+            for id_hc, data in self.records_to_write.items():
+                writer.writerow([id_hc, data['nombre'], data['apellido']])
