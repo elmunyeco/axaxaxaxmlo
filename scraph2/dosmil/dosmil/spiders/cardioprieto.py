@@ -19,7 +19,7 @@ class EstudioadbSpider(scrapy.Spider):
     
     def parse_historia_clinica(self, response):
         for row in response.css("table#dataTables-example tbody.tBody tr"):
-            historia_clinica = row.css("td::text").get()
+            historia_clinica = row.css("td::text").extract()[0]
             nombre = row.css("td::text").extract()[1]
             apellido = row.css("td::text").extract()[2]
             documento = row.css("td::text").extract()[3]
