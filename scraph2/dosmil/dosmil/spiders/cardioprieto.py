@@ -19,12 +19,13 @@ class EstudioadbSpider(scrapy.Spider):
     
     def parse_historia_clinica(self, response):
         for row in response.css("table#dataTables-example tbody.tBody tr"):
-            historia_clinica = row.css("td::text").extract_first()
+            historia_clinica = row.css("td::text").get()
             nombre = row.css("td::text").extract()[1]
             apellido = row.css("td::text").extract()[2]
             documento = row.css("td::text").extract()[3]
-            link_historia = row.css("td a.glyphicon-eye-open::attr(href)").extract_first()
-            link_estudios = row.css("td a.glyphicon-paperclip::attr(href)").extract_first()
+            link_historia = row.css("td.center a::attr(href)").extract()[0] if row.css("td.center a::attr(href)").extract() else None
+            link_estudios = row.css("td.center a::attr(href)").extract()[1] if len(row.css("td.center a::attr(href)").extract()) > 1 else None
+
 
             yield {
                 'historia_clinica': historia_clinica,
@@ -34,6 +35,7 @@ class EstudioadbSpider(scrapy.Spider):
                 'link_historia': link_historia,
                 'link_estudios': link_estudios,
             }
+            
 
         # Manejando paginación
         next_page = response.css("ul.pagination li a::attr(href)").extract()[-2]
