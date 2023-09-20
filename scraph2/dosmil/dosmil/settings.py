@@ -33,6 +33,7 @@ DOWNLOAD_DELAY = 2  # Retardo de 2 segundos entre solicitudes
 # Disable cookies (enabled by default)
 #COOKIES_ENABLED = False
 COOKIES_ENABLED = True
+COOKIES_DEBUG = True
 
 # Disable Telnet Console (enabled by default)
 #TELNETCONSOLE_ENABLED = False
