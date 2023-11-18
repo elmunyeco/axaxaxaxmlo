@@ -6,10 +6,11 @@ class EstudioadbSpider(scrapy.Spider):
     name = 'hc_paciente'
     start_urls = ['http://estudioadb.com/hc/']
 
-    def __init__(self, hc_id=None, *args, **kwargs): 
+    def __init__(self, hc_ids=None, *args, **kwargs): 
         super(EstudioadbSpider, self).__init__(*args, **kwargs)
-        self.hc_id = hc_id
-        self.pages_crawled = 0
+        # self.hc_id = hc_id
+        self.hc_ids = hc_ids.split(",") if hc_ids else []
+        self.hc_id = None
         self.hc_crawled = 0
         self.pacientes_crawled = 0
 
@@ -21,7 +22,8 @@ class EstudioadbSpider(scrapy.Spider):
         )
         
     def after_login(self, response):
-        if self.hc_id:
+        if self.hc_ids:
+            self.hc_id = self.hc_ids.pop(0)
             # Si se proporcionó un hc_id, navega directamente a los detalles del paciente y de la historia clínica.
             patient_details_url = f"http://estudioadb.com/hc/index.php/pacientes/editar/{self.hc_id}"
             yield scrapy.Request(url=patient_details_url, callback=self.parse_patient_details, meta={'historia_clinica': self.hc_id})
@@ -41,25 +43,28 @@ class EstudioadbSpider(scrapy.Spider):
             documento = row.css("td::text").extract()[3]
             link_historia = row.css("td.center a::attr(href)").extract()[0] if row.css("td.center a::attr(href)").extract() else None
             link_estudios = row.css("td.center a::attr(href)").extract()[1] if len(row.css("td.center a::attr(href)").extract()) > 1 else None
+       
+            print(f"PROCESANDO LA HC_ID: {historia_clinica}")
+            # Extracting patient details link
+            patient_details_url = response.urljoin(f"/hc/index.php/pacientes/editar/{historia_clinica}")
+            yield scrapy.Request(url=patient_details_url, callback=self.parse_patient_details, meta={'historia_clinica': historia_clinica})
 
-        if not self.hc_id and self.hc_crawled < 1:
-            self.hc_crawled += 1
+            # Imprimir link de estudios usanto formato f-string con una leyenda que diga "TIENE ESTUDIOS (link)" o "NO TIENE ESTUDIOS
+            # if link_estudios:
+            #     print(f"TIENE ESTUDIOS ({link_estudios})")
+            # else:
+            #     print("NO TIENE ESTUDIOS")
 
-        # Extracting patient details link
-        patient_details_url = response.urljoin(f"/hc/index.php/pacientes/editar/{historia_clinica}")
-        yield scrapy.Request(url=patient_details_url, callback=self.parse_patient_details, meta={'historia_clinica': historia_clinica})
+            # Extracting historia clinica details
+            historia_clinica_details_url = response.urljoin(link_historia)
+            yield scrapy.Request(url=historia_clinica_details_url, callback=self.parse_historia_clinica_details, meta={'historia_clinica': historia_clinica})
 
-        # Extracting historia clinica details
-        historia_clinica_details_url = response.urljoin(link_historia)
-        yield scrapy.Request(url=historia_clinica_details_url, callback=self.parse_historia_clinica_details, meta={'historia_clinica': historia_clinica})
-
-                            
         # Manejando paginación
-        if not self.pages_crawled < 1:
-            next_page = response.css("ul.pagination li a::attr(href)").extract()[-2]
-            if next_page:
-                self.pages_crawled += 1
-                yield scrapy.Request(url=next_page, callback=self.parse_historia_clinica)
+        next_page = response.css("ul.pagination li a::attr(href)").extract()[-2]
+        print(f"LA PROXIMA PAGINA VA A SER ({next_page})")
+        
+        if next_page:
+           yield scrapy.Request(url=next_page, callback=self.parse_historia_clinica)
 
     def parse_patient_details(self, response):
         historia_clinica = response.meta['historia_clinica']
@@ -134,12 +139,9 @@ class EstudioadbSpider(scrapy.Spider):
         visitas = response.css("div.panel.panel-red")
         
         for visita in visitas:
-            fecha = self.extract_visita_fecha(visita)
-            comentarios = self.extract_visita_comentarios(visita)
-            
             item = {
-                'fecha': fecha,
-                'comentarios': comentarios,
+                'fecha': self.extract_visita_fecha(visita),
+                'comentarios': self.extract_visita_comentarios(visita),
                 'signos_vitales': self.extract_visita_signos_vitales(visita),
                 'medicamentos': self.extract_visita_medicamentos(visita),
                 'comentario_medicamentos': self.extract_visita_comentario_medicamentos(visita)
@@ -186,4 +188,3 @@ class EstudioadbSpider(scrapy.Spider):
 
     def extract_visita_comentario_medicamentos(self, visita):
         return visita.css("textarea#comentario::text").get(default="").strip()
-
