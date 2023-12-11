@@ -1,18 +1,17 @@
 import scrapy
 import re
-from scrapy.exceptions import CloseSpider   
+from scrapy.exceptions import CloseSpider
 
 class EstudioadbSpider(scrapy.Spider):
-    name = 'hc_paciente'
+    name = 'hc_paciente_refactored_2'
     start_urls = ['http://estudioadb.com/hc/']
 
     def __init__(self, hc_ids=None, *args, **kwargs): 
         super(EstudioadbSpider, self).__init__(*args, **kwargs)
-        # self.hc_id = hc_id
         self.hc_ids = hc_ids.split(",") if hc_ids else []
         self.hc_id = None
-        self.hc_crawled = 0
-        self.pacientes_crawled = 0
+        self.current_task = None
+        self.task_queue = []
 
     def parse(self, response):
         return scrapy.FormRequest.from_response(
@@ -20,61 +19,41 @@ class EstudioadbSpider(scrapy.Spider):
             formdata={'usuario': 'omar', 'pass': 'Corbis5'},
             callback=self.after_login
         )
-        
+
     def after_login(self, response):
         if self.hc_ids:
             self.hc_id = self.hc_ids.pop(0)
-            # Si se proporcionó un hc_id, navega directamente a los detalles del paciente y de la historia clínica.
-            patient_details_url = f"http://estudioadb.com/hc/index.php/pacientes/editar/{self.hc_id}"
-            yield scrapy.Request(url=patient_details_url, callback=self.parse_patient_details, meta={'historia_clinica': self.hc_id})
-            
-            historia_clinica_details_url = f"http://estudioadb.com/hc/index.php/hClinica/verHClinica/{self.hc_id}"
-            yield scrapy.Request(url=historia_clinica_details_url, callback=self.parse_historia_clinica_details, meta={'historia_clinica': self.hc_id})
-            
-            print("##############################################")
-            print(f"PROCESANDO LA HC_ID: {self.hc_id}")
-            print("##############################################")
-            
-                        
-        # else:
-        #     # Si no se proporcionó un hc_id, sigue el flujo habitual.
-        #     historia_clinica_url = 'http://estudioadb.com/hc/index.php/hClinica/index'
-        #     yield scrapy.Request(historia_clinica_url, callback=self.parse_historia_clinica)
+            self.initiate_task_queue()
+            self.process_next_task()
+        else:
+            # Procesar sin hc_ids especificados
+            pass
 
-    def parse_historia_clinica(self, response):
-        for row in response.css("table#dataTables-example tbody.tBody tr"):
-            historia_clinica = row.css("td::text").extract()[0]
-            nombre = row.css("td::text").extract()[1]
-            apellido = row.css("td::text").extract()[2]
-            documento = row.css("td::text").extract()[3]
-            link_historia = row.css("td.center a::attr(href)").extract()[0] if row.css("td.center a::attr(href)").extract() else None
-            link_estudios = row.css("td.center a::attr(href)").extract()[1] if len(row.css("td.center a::attr(href)").extract()) > 1 else None
-       
-            print(f"PROCESANDO LA HC_ID: {historia_clinica}")
-            # Extracting patient details link
-            patient_details_url = response.urljoin(f"/hc/index.php/pacientes/editar/{historia_clinica}")
-            yield scrapy.Request(url=patient_details_url, callback=self.parse_patient_details, meta={'historia_clinica': historia_clinica})
+    def initiate_task_queue(self):
+        patient_details_url = f"http://estudioadb.com/hc/index.php/pacientes/editar/{self.hc_id}"
+        historia_clinica_details_url = f"http://estudioadb.com/hc/index.php/hClinica/verHClinica/{self.hc_id}"
 
-            # Imprimir link de estudios usanto formato f-string con una leyenda que diga "TIENE ESTUDIOS (link)" o "NO TIENE ESTUDIOS
-            # if link_estudios:
-            #     print(f"TIENE ESTUDIOS ({link_estudios})")
-            # else:
-            #     print("NO TIENE ESTUDIOS")
+        self.task_queue = [
+            {'url': patient_details_url, 'callback': self.parse_patient_details},
+            {'url': historia_clinica_details_url, 'callback': self.parse_historia_clinica_details}
+        ]
 
-            # Extracting historia clinica details
-            historia_clinica_details_url = response.urljoin(link_historia)
-            yield scrapy.Request(url=historia_clinica_details_url, callback=self.parse_historia_clinica_details, meta={'historia_clinica': historia_clinica})
+    def process_next_task(self):
+        if self.task_queue:
+            task = self.task_queue.pop(0)
+            self.current_task = task
+            yield scrapy.Request(url=task['url'], callback=task['callback'], meta={'historia_clinica': self.hc_id})
+        else:
+            if self.hc_ids:
+                self.after_login(None)  # Procesa el siguiente hc_id
+            else:
+                # Fin del proceso
+                pass
 
-        # Manejando paginación
-        next_page = response.css("ul.pagination li a::attr(href)").extract()[-2]
-        print(f"LA PROXIMA PAGINA VA A SER ({next_page})")
-        
-        if next_page:
-           yield scrapy.Request(url=next_page, callback=self.parse_historia_clinica)
+    # Métodos parse y extract como en tu versión original
 
     def parse_patient_details(self, response):
         historia_clinica = response.meta['historia_clinica']
-
         detalle = {
             'tipo': 'detalle_paciente',
             'historia_clinica': historia_clinica,
@@ -94,10 +73,9 @@ class EstudioadbSpider(scrapy.Spider):
             "Celular": response.css("#celular::attr(value)").get().strip(),
             "Profesión": response.css("#profesion::attr(value)").get().strip(),
             "Médico Referente": response.css("#referente::attr(value)").get().strip(),
-        }
-        
-        yield detalle
-    
+        }        yield detalle
+        self.process_next_task()
+
     def parse_historia_clinica_details(self, response):
         historia_clinica_data = {
             'tipo': 'detalle_historia_clinica',
@@ -111,12 +89,10 @@ class EstudioadbSpider(scrapy.Spider):
                 #'comentario_medicamentos': self.extract_visita_comentario_medicamentos(response)
 
             # Aquí puedes agregar más extractores para otros paneles.
-        }
-        
+        }        
         yield historia_clinica_data
-
-
- 
+        self.process_next_task()
+        
     def extract_diagnosticos(self, response):
         diagnosticos = {}
         for checkbox in response.css("div.form-group.center div.col-xs-4 input"):

@@ -46,7 +46,7 @@ mkdir -p files
 fetch_historias_clinicas() {
     IDS=$1
     FILE_NAME=$2
-    scrapy crawl hc_paciente -o "files/$FILE_NAME.json" -a hc_id=$IDS
+    echo "scapy crawl hc_paciente -o \"files/$FILE_NAME.json\" -a hc_id=$IDS"
 }
 
 # Generar y procesar IDs
